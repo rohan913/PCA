@@ -1,0 +1,27 @@
+Custom GFP Reference Creation
+
+Do NOT use textEdit on Mac because of Carriage returns ruining formats
+Use Linux or plaintext editor that avoids this
+
+Steps:
+
+1.Know your Vector and get Sequences of Interest:
+We used Rosa-CAG-LSL-ZsGreen1-WPRE targeting vector (sequence taken from website: https://www.jax.org/strain/007906). Since we have 3’ sequencing it was necessary to include the WPRE as part of the sequence in addition to the Zsgreen sequence. This is because woodchuck hepatitis virus post-transcriptional regulatory element (WPRE) is used to enhance the mRNA transcript stability
+
+2.Update Fasta File:
+Here we needed to update the mouse reference fasta by prepending the additional sequence as its own chromosome.
+>gfp dna:chromosome chromosome:mm10GFP:gfp:1:696:1
+ATGGCCCAGTCCAAGCACGGCCTGACCAAGGAGATGACCATGAAGTACCGCATGGAGGGC
+TGCGTGGACGGCCACAAGTTCGTGATCACCGGCGAGGGCATCGGCTACCCCTTCAAGGGC
+AAGCAGGCCATCAACCTGTGCGTGGTGGAGGGCGGCCCCTTGCCCTTCGCCGAGGACATC....
+
+3.Update Your gtf file:
+In our case we used Zsgreen1 GFP-WPRE and added it to the beginning as:
+
+gfp     ensembl exon    1       696     .       +       .       gene_id “gfp”; transcript_id “gfp”;
+
+4.Run cellranger mkref to create the reference
+
+Further Reading: https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/advanced/references
+  
+

@@ -1,0 +1,255 @@
+---
+title: Analysis of the single cell RNA-seq data from asbestos-induced pulmonary fibrosis in mice
+author: "R. Verma, N. Joshi, A.Misharin, S.Budinger"
+date: "6/5/2018"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r Load Libraries, message=FALSE}
+library(Seurat)
+library(dplyr)
+library(Matrix)
+library(cowplot)
+library(ggplot2)
+```
+
+##Load and Merge Data
+SC33 is the control while SC14 and SC15 are TiO2 and Asbestos respectively. Below, we modify cell names (barcodes) so they are all unique between samples. Here, we create a merged Seurat Object to identify clusters without using CCA. 
+```{r Load and Merge Data}
+SC33.data <- Read10X(data.dir = "~/Box/Asbestos_SC/03_Analysis_V2/00_Asbestos/01_data/SC33_multirun/filtered_gene_bc_matrices/mm10/")
+SC33 <- CreateSeuratObject(raw.data = SC33.data, min.cells = 3, min.genes = 200, project = "SC33")
+SC33@cell.names <- paste("SC33", SC33@cell.names, sep = "_")
+colnames(x = SC33@raw.data) <- paste("SC33", colnames(x = SC33@raw.data), sep = "_")
+rownames(x = SC33@meta.data) <- paste("SC33", rownames(x = SC33@meta.data), sep = "_")
+
+SC14.data <- Read10X(data.dir = "~/Box/Asbestos_SC/03_Analysis_V2/00_Asbestos/01_data/SC14/filtered_gene_bc_matrices/mm10/")
+lung <- AddSamples(object = SC33, new.data = SC14.data, add.cell.id = "SC14")
+SC15.data <- Read10X(data.dir = "~/Box/Asbestos_SC/03_Analysis_V2/00_Asbestos/01_data/SC15/filtered_gene_bc_matrices/mm10/")
+lung <- AddSamples(object = lung, new.data = SC15.data, add.cell.id = "SC15")
+
+```
+
+##Data Cleaning and Inspection
+In the beginning, we skip filtering and keep all cells, irrespecive of %mito and number of genes.
+
+###Normalize and find variable genes
+```{r Normalize and find variable genes}
+lung <- NormalizeData(object = lung, normalization.method = "LogNormalize", scale.factor = 10000) #Log normalize
+lung <- FindVariableGenes(object = lung, mean.function = ExpMean, dispersion.function = LogVMR) #Find variable genes
+length(x = lung@var.genes) #958
+hv.genes <- head(rownames(lung@hvg.info), 958)
+```
+
+###Data inspection and Scaling
+```{r Data inspection and Scaling}
+mito.genes <- grep(pattern = "^mt-", x = rownames(x = lung@data), value = TRUE)
+percent.mito <- Matrix::colSums(lung@raw.data[mito.genes, ])/Matrix::colSums(lung@raw.data)
+lung <- AddMetaData(object = lung, metadata = percent.mito, col.name = "percent.mito")
+```
+
+```{r Data Inspection Plots,echo=FALSE}
+VlnPlot(object = lung, features.plot = c("nGene", "nUMI", "percent.mito"), nCol = 3)
+par(mfrow = c(1, 2))
+GenePlot(object = lung, gene1 = "nUMI", gene2 = "percent.mito")
+GenePlot(object = lung, gene1 = "nUMI", gene2 = "nGene")
+```
+
+```{r ScaleData,results='hide',message=FALSE}
+lung <- ScaleData(object = lung, display.progress = T,vars.to.regress = c("nUMI"))
+```
+
+##Perform PCA and Clustering
+We examined our scree plot and manually inspected principal compenents for meaningful genes and clusters based on size. This led to the selection of the first 75 principal components as this is where we noted a decline in the quality of clusters being formed. 
+
+###Heatmap and Scree Plot
+```{r Heatmap and Scree Plot, echo=FALSE}
+lung <- RunPCA(object = lung, pc.genes = lung@var.genes, do.print = TRUE, pcs.print = 1:5, genes.print = 5, pcs.compute = 100)
+PCHeatmap(object = lung, pc.use = 72:81, cells.use = 500, do.balanced = TRUE, label.columns = FALSE, use.full = FALSE)
+PCElbowPlot(object = lung, num.pc = 100)
+```
+
+###Clustering and Visualization of Overall TSNE Plot
+```{r Clustering and Visualization of Overall TSNE Plot}
+lung <- FindClusters(object = lung, reduction.type = "pca", dims.use = 1:75, resolution = 3, print.output = F, save.SNN = TRUE, force.recalc = T, n.start = 100)
+lung <- RunTSNE(object = lung, dims.use = 1:75, do.fast = TRUE, check_duplicates = FALSE, perplexity = 30)
+```
+```{r, echo=FALSE}
+TSNEPlot(object = lung, do.label = T)
+TSNEPlot(object = lung, do.label = T, group.by = "orig.ident")
+```
+##Validation of Clusters and Obtaining Marker Genes
+We finally used the top 50 genes in specific clusters to validate the identities of the clusters from our TSNE that stood out as they seemed to be split in unusual ways. Following this we found markers for each cluster and assigned identities to each cluster by manual expression of top marker genes.
+```{r Validation of Clusters and Obtaining Marker Genes, message=FALSE}
+TSNEPlot(object = lung, do.label = T)
+lung <-ValidateSpecificClusters(lung, cluster1 = 0, cluster2 = 2, top.genes = 50) #B cells
+TSNEPlot(object = lung, do.label = T)
+lung <-ValidateSpecificClusters(lung, cluster1 = 1, cluster2 = 7, top.genes = 50) #AT2
+TSNEPlot(object = lung, do.label = T)
+lung <-ValidateSpecificClusters(lung, cluster1 = 19, cluster2 = 7, top.genes = 50) #AT2
+TSNEPlot(object = lung, do.label = T)
+lung <-ValidateSpecificClusters(lung, cluster1 = 14, cluster2 = 7, top.genes = 50) #AT2
+TSNEPlot(object = lung, do.label = T)
+lung <-ValidateSpecificClusters(lung, cluster1 = 12, cluster2 = 4, top.genes = 50) #AM
+TSNEPlot(object = lung, do.label = T) 
+
+lung.markers <- FindAllMarkers(object = lung, only.pos = TRUE, min.pct = 0.5, thresh.use = 0.5, max.cells.per.ident = 200)
+#save(lung, file = "lung.clean.Robj")
+```
+
+###Initial list of clusters based on examination of markers
+C2 - B cells
+C3 - Classcial monocytes
+C4 - Alveolar macrophages
+C5 - Classcial monocytes
+C6 - T cells
+C7 - AT2 cells
+C8 - NK cells
+C9 - Endothelial cells (Cldn5, Kdr, Kitl, Igfbp7)
+C10 - Non-classical monocytes
+C11 - Neutrophils
+C13 - Endothelial cells (Cd93, Ptprb, Aqp1)
+C15 - T cells
+C16 - Peribronchial interstitial macrophages
+C17 - DC2
+C18 - AT1 cells
+C20 - DC1
+C21 - T cells
+C22 - T cells
+C23 - Ciliated cells
+C24 - Fibroblasts
+C25 - Neutrophils
+C26 - Club cells
+C27 - Ciliated cells
+C28 - pDC
+C29 - Doublets: Neutrophils and B cells
+C30 - Endothelial cells (C13)
+C31 - Endothelial cells (C13)
+C32 - Cycling AMs
+C33 - Mesothelial cells
+C34 - AT2 cells
+C35 - Smooth muscle cells
+C36 - AT2 cells
+C37 - Ccr7+ DC
+C38 - Doublets: AT2 and Neutrophils
+C39 - Doublets: B cells and monocytes
+C40 - Cell cycle/Damaged DC1
+C41 - Cell cycle/Damaged T cells
+C42 - Mast cells/basophils
+C43 - Lymphatic progenitors
+C44 - Doublets: AM/AT2
+C45 - Megakaryocytes
+C46 - Doublets: AM and Neutrophils
+C47 - Doublets: AM and NK cells
+
+Composition of each cluster by library id:
+```{r Composition of each Cluster,echo=FALSE}
+lung@meta.data$cluster <- lung@ident
+ggplot(lung@meta.data,aes(x=cluster,fill=orig.ident))+
+  geom_bar(position='fill')+
+  ggtitle('Initial Cluster Proportions') +
+  labs(x='cluster',y='proportion',fill='library.id')+
+  scale_fill_manual(values=c("#00BA38","#F8766D","#619CFF"))
+```
+
+##Celltype Analysis (AT2 Cells)
+After forming the initial Seurat Object consisting of these clusters and all three libraries we then proceeded to identify sub populations within clusters in an iterative process similar to what was previously done in the merged object. For the purposes of this markdown we show the process done for AT2 cells while other celltypes can be found in the full Rcode included (02_Asbestos_Celltype_Exploration.R). 
+
+###Select Cluster of Interest thought to be AT2 based on markers:
+```{r AT2,results='hide',message=FALSE}
+AT2 <- SubsetData(lung, ident.use = c(7, 34, 36))
+TSNEPlot(AT2, do.label = T)
+TSNEPlot(AT2, do.label = T, group.by = "orig.ident")
+AT2 <- FindVariableGenes(object = AT2, mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5)
+
+AT2 <- ScaleData(object = AT2, vars.to.regress = c("nUMI", "percent.mito"))
+AT2 <- RunPCA(object = AT2, pc.genes = AT2@var.genes, do.print = TRUE, pcs.print = 1:5, genes.print = 5, pcs.compute = 50)
+```
+###Examining Principle Components:
+```{r AT2 PCA,echo=FALSE}
+PCAPlot(object = AT2, dim.1 = 1, dim.2 = 3, group.by = "orig.ident")
+PCHeatmap(object = AT2, pc.use = 10:18, cells.use = 500, do.balanced = TRUE, label.columns = FALSE, use.full = FALSE)
+PCElbowPlot(object = AT2, num.pc = 50)
+```
+###Find Clusters and run TSNE:
+```{r FindClusters RunTSNE AT2}
+AT2 <- FindClusters(object = AT2, reduction.type = "pca", dims.use = 1:15, resolution = 0.3, print.output = 0, save.SNN = TRUE, force.recalc = T)
+PrintFindClustersParams(object = AT2)
+AT2 <- RunTSNE(object = AT2, dims.use = 1:12, do.fast = TRUE, check_duplicates = FALSE)
+```
+```{r AT2 TSNE v1,echo=FALSE}
+TSNEPlot(object = AT2, do.label = T)
+TSNEPlot(object = AT2, do.label = T, group.by = "orig.ident")
+```
+###Resolve ambiguities by checking for known contaminating cell type markers (NK, B, Tcell markers). 
+Here we found sub clusters 3, 4 and 5 contain B, monocytes and T/NK cell doublets, so we removed them before confirming the other sub populations we found within AT2s via reclustering. 
+```{r AT2 initial inspection of clusters}
+FeaturePlot(AT2, features.plot = c("Ccr2", "Cd3e","Nkg7", "Cd79a"))
+AT2.markers <- FindAllMarkers(object = AT2, only.pos = TRUE, min.pct = 0.5, thresh.use = 0.5, max.cells.per.ident = 200)
+```
+```{r AT2 TSNE v2, echo=FALSE}
+AT2 <- SubsetData(AT2, ident.use = c(0,1,2))
+TSNEPlot(AT2, do.label = T)
+VlnPlot(AT2, features.plot = "nGene")
+```
+###Recheck variable genes and rescale and run PCA:
+```{r AT2 rerun PCA,results='hide',message=FALSE}
+AT2 <- FindVariableGenes(object = AT2, mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5)
+length(x = AT2@var.genes)
+AT2 <- ScaleData(object = AT2, vars.to.regress = c("nUMI"))
+AT2 <- RunPCA(object = AT2, pc.genes = AT2@var.genes, do.print = TRUE, pcs.print = 1:5, genes.print = 5, pcs.compute = 20)
+```
+###examine PCs:
+```{r AT2 reexamine PCs, echo=FALSE}
+AT2 <- ProjectPCA(object = AT2, do.print = FALSE)
+PCHeatmap(object = AT2, pc.use = 1:9, cells.use = 500, do.balanced = TRUE, label.columns = FALSE, use.full = FALSE)
+PCElbowPlot(object = AT2, num.pc = 20)
+```
+###Recluster and run TSNE:
+```{r recluster AT2}
+AT2 <- FindClusters(object = AT2, reduction.type = "pca", dims.use = 1:8, resolution = 0.4, print.output = 0, save.SNN = TRUE, force.recalc = T)
+PrintFindClustersParams(object = AT2)
+AT2 <- RunTSNE(object = AT2, dims.use = 1:8, do.fast = TRUE, check_duplicates = FALSE, perplexity = 20)
+```
+###Plot TSNE:
+```{r AT2 TSNE v3,echo=FALSE}
+TSNEPlot(object = AT2, do.label = T)
+TSNEPlot(object = AT2, do.label = F, group.by = "orig.ident")
+```
+###Find marker genes and view heatmap of top 10 genes in each subcluster:
+```{r AT2 final markers,message=FALSE}
+AT2.markers <- FindAllMarkers(object = AT2, only.pos = TRUE, min.pct = 0.5, thresh.use = 0.25, test.use = "wilcox")
+write.csv(AT2.markers, "AT2.markers_PC1_8_res0.4wilcox.csv")
+```
+```{r AT2 heatmap top 10,echo=FALSE}
+top10 <- AT2.markers %>% group_by(cluster) %>% top_n(10, avg_logFC)
+DoHeatmap(object = AT2, genes.use = top10$gene, slim.col.label = TRUE, remove.key = F)
+```
+###Vizualize the library origin of cells across the subclusters
+```{r AT2 Vizualize Library Origin,echo=FALSE}
+gSC33=grep('SC33',AT2@meta.data$orig.ident)
+gSC14=grep('SC14',AT2@meta.data$orig.ident)
+gSC15=grep('SC15',AT2@meta.data$orig.ident)
+a=TSNEPlot(AT2,cells.use = rownames((AT2@meta.data)[gSC33,]), do.label=T,no.legend=T,do.return=T)
+b=TSNEPlot(AT2,cells.use = rownames((AT2@meta.data)[gSC14,]), do.label=T,no.legend=T,do.return=T)
+c=TSNEPlot(AT2,cells.use = rownames((AT2@meta.data)[gSC15,]), do.label=T,no.legend=T,do.return=T)
+plot_grid(a,b,c, ncol = 1)
+barplotdata = AT2@meta.data 
+barplotdata$ident = as.character(AT2@ident)
+toplotdata <- barplotdata %>% group_by(ident,orig.ident) %>% count()
+ggplot(data=toplotdata,mapping = aes(x=ident,y=n,fill=orig.ident)) + geom_col(inherit.aes = T) 
+sums <- toplotdata %>% group_by(ident) %>% summarise(Sum=sum(n))
+sums <- rep(sums$Sum,each=3)
+toplotdata$sums <- sums
+toplotdata$proportion <- (toplotdata$n/toplotdata$sums)
+ggplot(data=toplotdata,mapping = aes(x=ident,y=proportion,fill=orig.ident)) + geom_col(inherit.aes = T) +
+  theme(axis.text = element_text(angle=90,hjust = 1))
+```
